@@ -1,0 +1,425 @@
+---
+title: "Final Project STT 481"
+author: "Nikhil Bhandarkar"
+date: "3/22/2022"
+output:
+  word_document: default
+  html_document: default
+---
+#Note
+This project is the culmination of my statistics degree, as it is the final project for my senior capstone. It showcases regression and machine learning techniques to predict house prices
+
+#Introduction
+The housing is one of the seminal problems of the modern era. House prices are often the main source of wealth for individuals and families. Therefore, an accurate prediction of house prices is necessary to best show consumers what prices would be for a given house, and allow them to compare it ot similar houses to see if the price is accurate to the standard. This is where the Housing Data comes in. The dataset provides 23 of numeric factors that can predict the final Sale price of a given house. We can split the data into a training set and test set and use the former dataset to create models that can predict the price of houses in the latter dataset.
+
+##Data and Setup
+```{r}
+library(FNN)
+library(boot)
+library(DAAG)
+library(ISLR)
+library(leaps)
+library(glmnet)
+library(rddtools)
+library(EAinference)
+library(writexl)
+```
+
+```{r}
+train <- read.csv("~/STT 481 Capstone/Data/Project Files/train_new.csv")
+test <- read.csv("~/STT 481 Capstone/Data/Project Files/test_new.csv")
+```
+
+```{r}
+head(train)
+```
+The raw data contains 23 explanatory variables and 1 response variable. I used the data provided on D2L and therefore did not need to manually clean the data. The data set contains entirely numerical variables, describing aspects of the house and greater property such as number of rooms above ground, surface area of the deck(if applicable), and area of the lot, as well as the response variable of the sale price. The data can then be put into a model to better understand the effect that they have on SalePrice.
+
+#Methods
+**KNN**
+
+
+```{r}
+Houses1 <- rbind(train, test)
+Houses <- rbind(train[0:23], test[0:23])
+head(Houses)
+```
+
+```{r}
+X.all <- model.matrix( ~ ., data = Houses)
+X.all <- scale(X.all)
+X.all <- X.all[,-1]
+X.train <- X.all[1:nrow(train),]
+X.test <- X.all[-(1:nrow(train)),]
+ncol(X.train)
+ncol(X.test)
+```
+
+```{r}
+loocv.mse <- rep(0,10)
+counter <- 0
+for (k in 1:10){ 
+  counter <- counter + 1
+  CVreg <- knn.reg(X.train, NULL, train$SalePrice, k = k)
+  loocv.mse[counter] <- mean(CVreg$residuals^2)
+}
+plot(1:10, loocv.mse,xlab = "K", type = "b")
+```
+I choose K = 4 because it has the lowest LOOCV MSE, as shown above.
+
+```{r}
+pred.out <- knn.reg(train = X.train, test = X.test, y = Houses1$SalePrice, k = 4)
+knnPred <- pred.out$pred
+write.csv(data.frame(knnPred), file = "knnPred.csv")
+```
+
+**Linear Model**
+
+```{r}
+lm.fit <- lm(SalePrice ~., data = train)
+summary(lm.fit)
+```
+The R-Squared value of 0.8019 tells us that the model can explain 80.19% of the variation in SalePrice,
+According to the p-Values, most of the coefficients are significant, but 5 are not. Additionally, all but three(HalfBath, BedroomAbvGr, KitchenAbvGr) and the intercept are positive, and the most impactful is GarageArea
+
+```{r}
+lm.fit <- lm(SalePrice ~. -BsmtFinSF2-LowQualFinSF-BsmtHalfBath-FullBath-HalfBath-GarageArea-MoSold, data = train )
+summary(lm.fit)
+```
+The most significant coefficients tend to be the more general signifies of house quality, like area or overall condition, as well as practical inclusions like kitchens and bedrooms.
+
+```{r}
+par(mfrow=c(2,2))
+plot(lm.fit)
+```
+There appears to be some nonlinearity due to the slight curvature of the residuals vs fitted plot
+The Q-Q plot indicates the data is not perfectly normal, so some transformation must be necessary
+
+```{r}
+lm.fit <- lm(log(SalePrice) ~. -BsmtFinSF2-LowQualFinSF-BsmtHalfBath-FullBath-HalfBath-GarageArea-MoSold, data = train )
+summary(lm.fit)
+par(mfrow = c(2,2))
+plot(lm.fit)
+```
+Doing a log transformation on Y seemed to fix the normality problem
+
+```{r}
+lm.fit <- lm(log(SalePrice) ~. -BsmtFinSF2-LowQualFinSF-BsmtHalfBath-FullBath-HalfBath-GarageArea-MoSold, data = train[- 1299])
+```
+
+```{r}
+summary(lm.fit)
+```
+In this model all of the values are significant at a .05 significance value except BedroomAbvGr. In addition, all of the significant variables have a positive effect on the sale price, except for KitchenAbvGr. The new model can explain 85.87% of the variation, which is an increase of around 4% from the untransformed model.
+
+```{r}
+lmPred <- predict(lm.fit, test)
+lmPred <- data.frame(exp(lmPred))
+write.csv(lmPred, "lmPred.csv")
+```
+
+```{r}
+glm.fit <- glm(log(SalePrice) ~ ., data = train[-1299,])
+cv.error.glm <- cv.glm(train[-1299,], glm.fit)
+cv.error.glm$delta
+```
+The predicted cv error for my Linear Model should be around 0.019
+
+**Subset Selection**
+I am using Best Subset Selection because it is fairly simple and easy to interpret. The dataset is small enough to warrant usage of best subset selection.
+```{r}
+regfit.full <- regsubsets(log(SalePrice) ~., data = train, nvmax = 23)
+reg.summary <-summary(regfit.full)
+```
+
+```{r}
+names(reg.summary)
+```
+There are 23 variables that could potentially affect the model, therefore nvmax should be equal to 23
+
+```{r}
+coef(regfit.full, 23)
+```
+It appears that lot area has the most impact coefficient on the overall house price, while there is actually a slight negative correlation between having an above ground bathroom and house price. However, most of the coeefencints tend to have a quite small effect on overall house price.
+
+```{r}
+reg.summary$rsq
+```
+As expected, the $R^2$ value increases as more variables are introduced
+
+```{r}
+par(mfrow=c(2,2))
+plot(reg.summary$rss ,xlab="Number of Variables ", ylab="RSS", type="l")
+plot(reg.summary$adjr2 ,xlab="Number of Variables ", ylab="Adjusted RSq", type="l")
+which.max(reg.summary$adjr2)
+```
+
+```{r}
+plot(reg.summary$bic, xlab = "Number of Variables ", ylab = "BIC", type = "l")
+which.min(reg.summary$bic)
+```
+BIC provides the simplest model, as it provides the least number of variables. In order to preserve interpretability, I opted to use BIC.
+
+```{r}
+predict.regsubsets <- function (object, newdata , id, ...){
+form <- as.formula(object$call[[2]]) # formula of null model
+mat <- model.matrix(form, newdata) 
+coefi <- coef(object, id = id) 
+xvars <- names(coefi) # names of the non-zero coefficient estimates
+return(mat[,xvars] %*% coefi) # X[,non-zero variables] %*% Coefficients[non-zero variables]
+}
+```
+
+```{r}
+fold.index <- cut(sample(1:nrow(train)), breaks=10, labels=FALSE)
+cv.error.best.fit <- rep(0,23)
+  for(i in 1:23){ # try different numbers of variables
+    cat("i=", i,"\n")
+    error <- rep(0, 10)
+    for (k in 1:10){
+      House.train <- train[fold.index != k,]
+      House.test <- train[fold.index == k,]
+      true.y <- House.test[,"SalePrice"]
+      best.fit <- regsubsets(log(SalePrice) ~ ., data = House.train, nvmax = 23)
+      pred <- predict(best.fit, House.test, id = i)
+      error[k] <- mean((pred - log(true.y))^2)
+    }
+  print(mean(error))
+  cv.error.best.fit[i] <- mean(error)
+}
+```
+
+```{r}
+which.min(cv.error.best.fit)
+```
+The ID for the best subset selection is equal to the lowest cv error rate as given by the formula above. Therefore, the ID that will be used for my pediction.
+```{r}
+subsetPred <- predict.regsubsets(regfit.full, newdata = test, id =19) 
+subsetPred <- data.frame(exp(subsetPred))
+#write.csv(subsetPred, "subsetPred.csv")
+```
+
+```{r}
+cv.error.best.fit[19]
+```
+The cv test error for best subset selection should be about 0.025
+
+##Shrinkage Methods
+
+*Ridge Regression*
+```{r}
+X <- model.matrix(SalePrice ~., train)[,-1] # the first column is the intercept
+y <- log(train$SalePrice)
+```
+
+```{r}
+ridge.mod <- glmnet(X, y, alpha = 0)
+```
+
+```{r}
+cv.out <- cv.glmnet(X, y, alpha = 0, nfolds = 10)
+plot(cv.out)
+```
+
+```{r}
+dim(coef(ridge.mod))
+```
+
+```{r}
+ridge.mod$lambda[50]
+```
+
+```{r}
+coef(ridge.mod)[,50]
+```
+The tuning parameter Lambda is chosen by using minimizing cv.out, using the cv.glmnet function on the subset selection. I stored it in the object bestlam, and inserted it into the prediction. 
+
+```{r}
+bestlam <- cv.out$lambda.min
+coef(ridge.mod, s = bestlam)
+```
+Tuning parameters were chosen based on the best lambda using the minimum found using 10 fold cross validation. The model shows that there is a positive relationship between all of the variables except for BedroomAbvGr, KitchenAbvGr, and the intercept, with the largest effect coming from BsmtFinSF2.
+
+```{r}
+test.X <- model.matrix(SalePrice ~., test)[,-1]
+ridge.pred <- predict(ridge.mod, s = bestlam, newx = test.X)
+ridgePred <- data.frame(exp(ridge.pred))
+write.csv(ridgePred, "ridgePred.csv")
+```
+
+```{r}
+bestlam
+```
+Bestlam should be equal to the cv errorm therefore the cv estimate should be about 0.04
+*Lasso*
+```{r}
+lasso.mod <- glmnet(X, y, alpha = 1)
+```
+
+```{r}
+cv.out <- cv.glmnet(X, y, alpha = 1, nfolds = 10)
+cv.out
+```
+
+```{r}
+cv.out <- cv.glmnet(X, y, alpha = 1, nfolds = 10)
+bestlam <- cv.out$lambda.min
+coef(lasso.mod, s = bestlam)
+```
+Tuning parameter was chosen by using 10 fold cross validation
+Many of the coefficients with best lambda are exactly 0, but in this model, GarageArea and BsmtUnfSF had the largest effect. Additionally, all but KitchenAbvGr are positive.
+```{r}
+lasso.pred <- predict(lasso.mod, s = bestlam, newx = test.X)
+lassoPred <- data.frame(exp(lasso.pred))
+write.csv(lassoPred, "lassoPred.csv")
+```
+
+```{r}
+cv.out$lambda.min
+```
+
+It appears that Lasso is better than ridge regression due to the lower test cv error.
+
+##GAM
+```{r}
+library(gam)
+library(gamreg)
+```
+
+```{r}
+gam.fit <- gam(log(SalePrice) ~., data = train)
+summary(gam.fit)
+```
+In this model, the degrees of freedom are set to 1, because no splines were used in model creation. Further, the majority of the data appears to be significant at a 0.05 significance level. In this model, it appears that all of the variables exhibit a parametric(linear) effect, with degrees of freedom set to 1.
+```{r}
+gam.pred <- predict(gam.fit, newdata = test)
+gamPred <- data.frame(exp(gam.pred))
+write.csv(gamPred, "gamPred.csv")
+```
+
+##Tree-Based Methods
+
+**Decision Trees**
+```{r}
+library(tree)
+```
+
+```{r}
+tree.fit <- tree(log(SalePrice)~., train)
+summary(tree.fit)
+plot(tree.fit)
+text(tree.fit)
+```
+
+```{r}
+cv.fit.tree <- cv.tree(tree.fit)
+plot(cv.fit.tree$size, cv.fit.tree$dev, type = "b")
+which.min(cv.fit.tree$size)
+```
+
+```{r}
+prune.fit <- prune.tree(tree.fit, best = 8)
+plot(prune.fit)
+text(prune.fit)
+```
+The main internal node is OverallQual, which is also 4 of the other internal nodes, showing how important OverallQuality is to this model. The model shows how a higher OverallQual always leads to a higher SalePrice. I pruned the tree using the lowest cv error given by the tree.cv function, however thtat ended up being just equal to the original model, as 11 was the best size.
+
+```{r}
+tree.pred <- predict(prune.fit, test)
+tree.pred <- exp(tree.pred)
+write.csv(tree.pred, "treePred.csv")
+```
+
+```{r}
+log(cv.fit.tree$dev)
+```
+
+**Bagging**
+```{r}
+library(randomForest)
+ncol(train) - 1
+
+```
+
+```{r}
+bag.fit <- randomForest(log(SalePrice) ~., data = train, mtry = 23, importance = TRUE, ntree = 1000)
+importance(bag.fit)
+varImpPlot(bag.fit)
+```
+In this model, OverallQual performs far and away the best of all the variables, as it is the most important of the variables. Interestingly, the top two variables for %IncMSE and IncNodePurity are the exact same, and there is only slight variablity for the rest. mtry was set to be equal to the number of explanatory variables(23), so that should be suffiecent for our model
+```{r}
+bag.cv <- rfcv(trainx = train, trainy = log(train$SalePrice), cv.fold = 10)
+plot(bag.cv$error.cv, type ="b")
+```
+The lowest cv error 
+```{r}
+bag.pred <- predict(bag.fit, test)
+write.csv(bag.pred, "bagPred.csv")
+```
+
+```{r}
+bag.cv$error.cv
+```
+
+**Random Forest**
+
+```{r}
+rf.fit <- randomForest(log(SalePrice)~., data = train, mtry = round(sqrt(ncol(train) - 1)), importance = TRUE)
+rf.fit
+importance(rf.fit)
+varImpPlot(rf.fit)
+```
+Similar to Bagging, OverallQual and X1stFlrSF are the most important variables to 
+the random forest model. The order switches for %IncMSE and IncNodePurity, but the difference is quite small. The tuning parameter(mtry) was chosen by using the formula round(sqrt(ncol(train) - 1)), which would give an output of 5. The accuracy of this method is proven by the rfcv function shown below.
+```{r}
+rf.cv <- rfcv(trainx = train, trainy = log(train$SalePrice), cv.fold=10, scale="log", step=0.5, mtrysize = round(sqrt(ncol(train) - 1)))
+```
+
+```{r}
+round(sqrt(ncol(train) - 1))
+plot(rf.cv$error.cv, type = "b")
+```
+
+```{r}
+rf.fit$error.cv
+```
+
+```{r}
+rf.pred <- predict(rf.fit, test)
+rfPred <- data.frame(exp(rf.pred))
+write.csv(rfPred, "rfPred.csv")
+```
+
+**Boosting**
+```{r}
+library(gbm)
+boost.fit <- gbm(SalePrice ~., data = train, distribution = "gaussian", shrinkage = 0.01, n.tree = 5000, interaction.depth = 4)
+summary(boost.fit)
+```
+As has been the case with all of the other tree based methods, OverallQual is far and away the most relatively influential of all of the parameters. 
+```{r}
+set.seed(4302022)
+boost.cv.fit <- gbm(log(SalePrice) ~., data = train, distribution = "gaussian", shrinkage = 0.01, n.tree = 5000, interaction.depth = 4, cv.fold = 10)
+which.min(boost.cv.fit$cv.error)
+```
+The number of trees for the gradient boosting model is determined by adding a cv.fold to the model. In turn, the optimum number trees used is 4942.
+
+```{r}
+boost.pred <- predict(boost.cv.fit, newdata = test, n.trees = which.min(boost.cv.fit$cv.error))
+boostPred <- data.frame(exp(boost.pred))
+write.csv(boostPred, "boostPred.csv")
+```
+
+```{r}
+boost.cv.fit$cv.error[3158]
+```
+
+#Predictions and Performance
+Before inputting my findings into Kaggle, I used cross-validation to find all of the CV test errors for all nine methods. In theory, the method with the lowest cv test error should have the most accurate prediction. Given this, I believe that gradient boosting should have the lowest Kaggle score, due to it's low cv test error.
+
+When inputting the test prediction into Kaggle, my accuracy prediction bore fruit, as Boosting had the lowest Kaggle score(0.13909). An interesting pattern I noticed is that models got progressively better(i.e. boosting was better than random forest, which itself was better than bagging, and so on). This demonstrates one of the fundamental principles in model building: there is always a trade off between interpretablity and flexibility. A linear model is fairly easy to understand(just add the significant coefficients multiplied by the values together), while boosting is relatively hard to interpret, but can provide more accurate results by capturing more data in its fit. This is why I think boosting and random forest performed much better than the simpler models like KNN and Linear Regression
+
+#Conclusion and Discussion
+Machine learning is one of the great innovations of the information age. With it, we can do the impossible and make problems once thought impossible as simple as basic arithmetic. The models took the nearly two dozen variables provided by the dataset to determine the price of housing(a preeminent struggle for many a young person in the modern age) by showing how each variable affects the outcome. Consistently, the models showed that Overall quality and basic factors, like lot size, affected the price far more than the more flashy aspects, like number of full baths and garage size. 
+
+There is an old saying about real estate: it's all about location, location, location! This adage would serve quite nicely as the basis for further investigation. If you wanted to go more general to the housing market, you could look at the type of materials used in constriction, as well as things like built in appliencies(like Stoves and fridges). If you wanted to go a more socieital level, further data would be needed on demographics of the neighborhood, as well as proximitiy to areas of interest(schools, places of work, cultural amentities, ect.). 
